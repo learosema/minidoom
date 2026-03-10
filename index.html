@@ -70,27 +70,42 @@ function PerlinNoise(seed=0){
 const noise = PerlinNoise(42); // deterministic seed
 
 // ────────────────────────  TEXTURE GENERATION  ────────────────────────
-function generateNoiseTexture(){
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = TEXTURE_W;
-  const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(TEXTURE_W, TEXTURE_W);
-  for(let y=0;y<TEXTURE_W;y++){
-    for(let x=0;x<TEXTURE_W;x++){
-      const n = noise(x/32, y/32, 0) * 0.5 + 0.5; // [0,1]
-      const col = Math.floor(n*255);
-      const i = (y*TEXTURE_W + x)*4;
-      img.data[i+0] = col; // R
-      img.data[i+1] = col; // G
-      img.data[i+2] = col; // B
-      img.data[i+3] = 255; // A
+// baseColor / noiseColor: [r, g, b] arrays (0–255).
+// The noise value (0–1) linearly blends from baseColor to noiseColor.
+// scale: how many noise "tiles" fit across the texture — higher = finer grain.
+// zOffset: slice through the 3-D noise volume for variety.
+function generateNoiseTextureData({ zOffset = 0, scale = 4, baseColor = [0,0,0], noiseColor = [255,255,255] } = {}){
+  const data = new Uint8ClampedArray(TEXTURE_W * TEXTURE_W * 4);
+  for(let y = 0; y < TEXTURE_W; y++){
+    for(let x = 0; x < TEXTURE_W; x++){
+      // scale controls how many noise periods span the texture
+      const n = noise(x / TEXTURE_W * scale, y / TEXTURE_W * scale, zOffset) * 0.5 + 0.5; // [0,1]
+      const i = (y * TEXTURE_W + x) * 4;
+      data[i+0] = Math.floor(baseColor[0] + n * (noiseColor[0] - baseColor[0]));
+      data[i+1] = Math.floor(baseColor[1] + n * (noiseColor[1] - baseColor[1]));
+      data[i+2] = Math.floor(baseColor[2] + n * (noiseColor[2] - baseColor[2]));
+      data[i+3] = 255;
     }
   }
-  ctx.putImageData(img,0,0);
-  return canvas;
+  return data;
 }
-const wallTexture = generateNoiseTexture();
-const floorTexture = generateNoiseTexture(); // same but could be different
+
+// ── Texture definitions ───────────────────────────────────────────────────────
+// Wall: cool stone look — dark grey base, lighter grey noise, fine scale
+const wallTexData = generateNoiseTextureData({
+  zOffset: 0, scale: 6,
+  baseColor: [60, 55, 50], noiseColor: [180, 165, 140]
+});
+// Floor: worn concrete — olive/brown base, tan noise, very fine tiling
+const floorTexData = generateNoiseTextureData({
+  zOffset: 3.7, scale: 8,
+  baseColor: [45, 40, 30], noiseColor: [120, 110, 80]
+});
+// Ceiling: dark plaster — near-black base, muted blue-grey noise
+const ceilTexData = generateNoiseTextureData({
+  zOffset: 9.1, scale: 5,
+  baseColor: [20, 20, 28], noiseColor: [70, 70, 90]
+});
 
 // ────────────────────────  GAME OBJECTS  ────────────────────────
 const canvas = document.getElementById('game');
@@ -157,112 +172,117 @@ function rotate(angle){
 function render(){
   const w = canvas.width;
   const h = canvas.height;
-  ctx.fillStyle = '#444'; // floor color
-  ctx.fillRect(0, h/2, w, h/2); // floor
-  ctx.fillStyle = '#222'; // ceiling
-  ctx.fillRect(0, 0, w, h/2); // ceiling
 
-  for(let x=0;x<w;x++){
-    // 1. Ray position and direction
-    const cameraX = 2 * x / w - 1; // x-coordinate in camera space
+  const frameData = ctx.createImageData(w, h);
+  const buf = frameData.data;
+
+  function setPixel(x, y, r, g, b){
+    const i = (y * w + x) * 4;
+    buf[i]   = r;  buf[i+1] = g;  buf[i+2] = b;  buf[i+3] = 255;
+  }
+
+  // ── Floor & ceiling casting ────────────────────────────────────────────────
+  // For every row below (and above) the horizon we compute the real-world floor
+  // position that each screen pixel maps to, then sample the floor/ceil texture.
+  for(let y = 0; y < h; y++){
+    const isFloor   = y > h / 2;
+    const isCeiling = y < h / 2;
+    if(!isFloor && !isCeiling) continue; // exact horizon row — skip (tiny edge)
+
+    // rowDir: signed distance of this row from the horizon (positive = floor side)
+    const rowDir = isFloor ? (y - h / 2) : (h / 2 - y);
+
+    // Camera height is h/2, so the distance to the floor/ceil plane for this row:
+    const rowDist = (h / 2) / rowDir;
+
+    // Step vector per screen-x pixel in world space for this row
+    const floorStepX = rowDist * 2 * player.planeX / w;
+    const floorStepY = rowDist * 2 * player.planeY / w;
+
+    // World position of the leftmost pixel on this row
+    let floorX = player.x + rowDist * (player.dirX - player.planeX);
+    let floorY = player.y + rowDist * (player.dirY - player.planeY);
+
+    for(let x = 0; x < w; x++, floorX += floorStepX, floorY += floorStepY){
+      // Sample texture — use fractional world coordinate * TEXTURE_W, tiled
+      const tx = Math.floor(floorX * TEXTURE_W) & (TEXTURE_W - 1);
+      const ty = Math.floor(floorY * TEXTURE_W) & (TEXTURE_W - 1);
+      const ti = (ty * TEXTURE_W + tx) * 4;
+
+      // Distance-based darkening: objects far away appear darker
+      const light = Math.max(0.15, 1.0 - rowDist * 0.07);
+
+      const texData = isFloor ? floorTexData : ceilTexData;
+      setPixel(x, y,
+        texData[ti]   * light,
+        texData[ti+1] * light,
+        texData[ti+2] * light
+      );
+    }
+  }
+
+  // ── Wall casting ──────────────────────────────────────────────────────────
+  for(let x = 0; x < w; x++){
+    const cameraX = 2 * x / w - 1;
     const rayDirX = player.dirX + player.planeX * cameraX;
     const rayDirY = player.dirY + player.planeY * cameraX;
 
-    // 2. Map position
     let mapX = Math.floor(player.x);
     let mapY = Math.floor(player.y);
 
-    // 3. Length of ray from current position to next x or y-side
-    let sideDistX, sideDistY;
+    const deltaDistX = rayDirX === 0 ? 1e30 : Math.abs(1 / rayDirX);
+    const deltaDistY = rayDirY === 0 ? 1e30 : Math.abs(1 / rayDirY);
 
-    // 4. Length of ray from one x or y-side to next x or y-side
-    const deltaDistX = Math.abs(1 / rayDirX);
-    const deltaDistY = Math.abs(1 / rayDirY);
-    let perpWallDist;
+    let stepX, stepY, sideDistX, sideDistY;
+    if(rayDirX < 0){ stepX = -1; sideDistX = (player.x - mapX) * deltaDistX; }
+    else            { stepX =  1; sideDistX = (mapX + 1.0 - player.x) * deltaDistX; }
+    if(rayDirY < 0){ stepY = -1; sideDistY = (player.y - mapY) * deltaDistY; }
+    else            { stepY =  1; sideDistY = (mapY + 1.0 - player.y) * deltaDistY; }
 
-    // 5. What direction to step in x and y (+1 or -1)
-    let stepX, stepY;
-    let hit = 0; // Was a wall hit?
-    let side; // NS or EW wall?
-
-    if(rayDirX < 0){
-      stepX = -1;
-      sideDistX = (player.x - mapX) * deltaDistX;
-    }else{
-      stepX = 1;
-      sideDistX = (mapX + 1.0 - player.x) * deltaDistX;
-    }
-    if(rayDirY < 0){
-      stepY = -1;
-      sideDistY = (player.y - mapY) * deltaDistY;
-    }else{
-      stepY = 1;
-      sideDistY = (mapY + 1.0 - player.y) * deltaDistY;
+    let side;
+    for(;;){
+      if(sideDistX < sideDistY){ sideDistX += deltaDistX; mapX += stepX; side = 0; }
+      else                      { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+      if(MAP[mapY][mapX] > 0) break;
     }
 
-    // 6. Perform DDA
-    while(hit === 0){
-      // Jump to next map square, OR in x-direction, OR in y-direction
-      if(sideDistX < sideDistY){
-        sideDistX += deltaDistX;
-        mapX += stepX;
-        side = 0; // hit a vertical wall
-      }else{
-        sideDistY += deltaDistY;
-        mapY += stepY;
-        side = 1; // hit a horizontal wall
-      }
-      // Check if ray has hit a wall
-      if(MAP[mapY][mapX] > 0) hit = 1;
-    }
+    const perpWallDist = side === 0
+      ? (mapX - player.x + (1 - stepX) / 2) / rayDirX
+      : (mapY - player.y + (1 - stepY) / 2) / rayDirY;
 
-    // 7. Calculate distance projected on camera direction (perp distance)
-    if(side === 0){
-      perpWallDist = (mapX - player.x + (1 - stepX) / 2) / rayDirX;
-    }else{
-      perpWallDist = (mapY - player.y + (1 - stepY) / 2) / rayDirY;
-    }
-
-    // 8. Calculate height of line to draw on screen
     const lineHeight = Math.floor(h / perpWallDist);
+    const drawStart  = Math.max(0, Math.floor(h / 2 - lineHeight / 2));
+    const drawEnd    = Math.min(h - 1, Math.floor(h / 2 + lineHeight / 2));
 
-    // 9. Calculate lowest and highest pixel to fill in current stripe
-    let drawStart = -lineHeight / 2 + h / 2;
-    if(drawStart < 0) drawStart = 0;
-    let drawEnd = lineHeight / 2 + h / 2;
-    if(drawEnd >= h) drawEnd = h - 1;
-
-    // 10. Texture coordinate
-    let wallX; // where exactly the wall was hit
-    if(side === 0){
-      wallX = player.y + perpWallDist * rayDirY;
-    }else{
-      wallX = player.x + perpWallDist * rayDirX;
-    }
+    let wallX = side === 0
+      ? player.y + perpWallDist * rayDirY
+      : player.x + perpWallDist * rayDirX;
     wallX -= Math.floor(wallX);
 
-    const texX = Math.floor(wallX * TEXTURE_W);
-    const step = TEXTURE_W / lineHeight;
-    let texPos = (drawStart - h / 2 + lineHeight / 2) * step;
+    let texX = Math.floor(wallX * TEXTURE_W);
+    if(side === 0 && rayDirX > 0) texX = TEXTURE_W - texX - 1;
+    if(side === 1 && rayDirY < 0) texX = TEXTURE_W - texX - 1;
 
-    // 11. Draw the vertical stripe
-    for(let y=drawStart; y<drawEnd; y++){
+    const texStep = TEXTURE_W / lineHeight;
+    let texPos = (drawStart - h / 2 + lineHeight / 2) * texStep;
+
+    // Side walls (Y-facing) are 40% darker — cheap directional light
+    const shadeFactor = side === 1 ? 0.6 : 1.0;
+    const light = shadeFactor / (1.0 + perpWallDist * perpWallDist * 0.002);
+
+    for(let y = drawStart; y <= drawEnd; y++){
       const texY = Math.floor(texPos) & (TEXTURE_W - 1);
-      texPos += step;
-
-      const pixel = wallTexture.getContext('2d')
-                              .getImageData(texX, texY, 1, 1).data;
-
-      // Simple light based on distance
-      const light = 1.0 / (1.0 + perpWallDist * perpWallDist * 0.0005);
-      const r = Math.min(255, pixel[0] * light);
-      const g = Math.min(255, pixel[1] * light);
-      const b = Math.min(255, pixel[2] * light);
-
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(x, y, 1, 1);
+      texPos += texStep;
+      const ti = (texY * TEXTURE_W + texX) * 4;
+      setPixel(x, y,
+        Math.min(255, wallTexData[ti]   * light),
+        Math.min(255, wallTexData[ti+1] * light),
+        Math.min(255, wallTexData[ti+2] * light)
+      );
     }
   }
+
+  ctx.putImageData(frameData, 0, 0);
 }
 
 // ────────────────────────  RESIZE  ────────────────────────
