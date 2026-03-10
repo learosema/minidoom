@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mini Doom Clone (Canvas 2D)</title>
+<style>
+  body{margin:0;overflow:hidden;background:#000;}
+  canvas{display:block; width: 100vw; height: 100vh; image-rendering: pixelated;}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<script>
+// ────────────────────────  CONFIGURATION  ────────────────────────
+const TILE_SIZE   = 64;          // Size of each map tile in world units
+const TEXTURE_W   = 64;          // Texture width/height
+const MAP = [
+  [1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,0,1,0,1,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,0,1,0,1,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,1,1,1,1,1,1,1,1,1]
+];
+const MAP_WIDTH  = MAP[0].length;
+const MAP_HEIGHT = MAP.length;
+
+// ────────────────────────  PERLIN NOISE  ────────────────────────
+function PerlinNoise(seed=0){
+  const perm = new Uint8Array(512);
+  const p = new Uint8Array(256);
+  for(let i=0;i<256;i++) p[i] = i;
+  // Shuffle
+  for(let i=255;i>0;i--){
+    const j = Math.floor((i+1)*Math.random());
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  for(let i=0;i<512;i++) perm[i] = p[i & 255];
+
+  function fade(t){ return t*t*t*(t*(t*6-15)+10); }
+  function lerp(a,b,t){ return a + t*(b-a); }
+  function grad(hash, x, y, z){
+    const h = hash & 15;
+    const u = h<8 ? x : y;
+    const v = h<4 ? y : (h===12||h===14 ? x : z);
+    return ((h&1)===0 ? u : -u) + ((h&2)===0 ? v : -v);
+  }
+  return function noise(x,y,z){
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
+    x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
+    const u = fade(x), v = fade(y), w = fade(z);
+    const A  = perm[X]+Y, AA = perm[A]+Z, AB = perm[A+1]+Z;
+    const B  = perm[X+1]+Y, BA = perm[B]+Z, BB = perm[B+1]+Z;
+
+    return lerp(
+      lerp(
+        lerp(grad(perm[AA],   x,   y,   z),
+             grad(perm[BA],   x-1, y,   z), u),
+        lerp(grad(perm[AB],   x,   y-1, z),
+             grad(perm[BB],   x-1, y-1, z), u), v),
+      lerp(
+        lerp(grad(perm[AA+1], x,   y,   z-1),
+             grad(perm[BA+1], x-1, y,   z-1), u),
+        lerp(grad(perm[AB+1], x,   y-1, z-1),
+             grad(perm[BB+1], x-1, y-1, z-1), u), v), w);
+  };
+}
+const noise = PerlinNoise(42); // deterministic seed
+
+// ────────────────────────  TEXTURE GENERATION  ────────────────────────
+function generateNoiseTexture(){
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = TEXTURE_W;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(TEXTURE_W, TEXTURE_W);
+  for(let y=0;y<TEXTURE_W;y++){
+    for(let x=0;x<TEXTURE_W;x++){
+      const n = noise(x/32, y/32, 0) * 0.5 + 0.5; // [0,1]
+      const col = Math.floor(n*255);
+      const i = (y*TEXTURE_W + x)*4;
+      img.data[i+0] = col; // R
+      img.data[i+1] = col; // G
+      img.data[i+2] = col; // B
+      img.data[i+3] = 255; // A
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return canvas;
+}
+const wallTexture = generateNoiseTexture();
+const floorTexture = generateNoiseTexture(); // same but could be different
+
+// ────────────────────────  GAME OBJECTS  ────────────────────────
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+resize();
+window.addEventListener('resize', resize);
+
+const player = {
+  x: 3.5, y: 3.5,          // Position (in map units)
+  dirX: -1, dirY: 0,       // Direction vector
+  planeX: 0, planeY: 0.66, // 2D raycaster camera plane (perpendicular to dir)
+  moveSpeed: 3.0,          // Units per second
+  rotSpeed: 2.0            // Radians per second
+};
+
+const keys = {};
+window.addEventListener('keydown', e => keys[e.key] = true);
+window.addEventListener('keyup',   e => keys[e.key] = false);
+
+// ────────────────────────  MAIN LOOP  ────────────────────────
+let lastTime = performance.now();
+function loop(){
+  const now = performance.now();
+  const dt = (now - lastTime) / 1000; // seconds
+  lastTime = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ────────────────────────  UPDATE  ────────────────────────
+function update(dt){
+  // Rotation
+  if(keys['ArrowLeft']) rotate(player.rotSpeed * dt);
+  if(keys['ArrowRight']) rotate(-player.rotSpeed * dt);
+  // Movement
+  let moveX = 0, moveY = 0;
+  if(keys['ArrowUp'] || keys['w']){ moveX += player.dirX; moveY += player.dirY; }
+  if(keys['ArrowDown']|| keys['s']){ moveX -= player.dirX; moveY -= player.dirY; }
+  if(moveX !==0 || moveY !==0){
+    const len = Math.hypot(moveX, moveY);
+    moveX = (moveX/len)*player.moveSpeed*dt;
+    moveY = (moveY/len)*player.moveSpeed*dt;
+    const nx = player.x + moveX;
+    const ny = player.y + moveY;
+    // Simple collision: don't move into walls
+    if(MAP[Math.floor(ny)][Math.floor(player.x)] === 0) player.y = ny;
+    if(MAP[Math.floor(player.y)][Math.floor(nx)] === 0) player.x = nx;
+  }
+}
+
+function rotate(angle){
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const oldDirX = player.dirX;
+  player.dirX = player.dirX * cos - player.dirY * sin;
+  player.dirY = oldDirX * sin + player.dirY * cos;
+  const oldPlaneX = player.planeX;
+  player.planeX = player.planeX * cos - player.planeY * sin;
+  player.planeY = oldPlaneX * sin + player.planeY * cos;
+}
+
+// ────────────────────────  RENDER  ────────────────────────
+function render(){
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.fillStyle = '#444'; // floor color
+  ctx.fillRect(0, h/2, w, h/2); // floor
+  ctx.fillStyle = '#222'; // ceiling
+  ctx.fillRect(0, 0, w, h/2); // ceiling
+
+  for(let x=0;x<w;x++){
+    // 1. Ray position and direction
+    const cameraX = 2 * x / w - 1; // x-coordinate in camera space
+    const rayDirX = player.dirX + player.planeX * cameraX;
+    const rayDirY = player.dirY + player.planeY * cameraX;
+
+    // 2. Map position
+    let mapX = Math.floor(player.x);
+    let mapY = Math.floor(player.y);
+
+    // 3. Length of ray from current position to next x or y-side
+    let sideDistX, sideDistY;
+
+    // 4. Length of ray from one x or y-side to next x or y-side
+    const deltaDistX = Math.abs(1 / rayDirX);
+    const deltaDistY = Math.abs(1 / rayDirY);
+    let perpWallDist;
+
+    // 5. What direction to step in x and y (+1 or -1)
+    let stepX, stepY;
+    let hit = 0; // Was a wall hit?
+    let side; // NS or EW wall?
+
+    if(rayDirX < 0){
+      stepX = -1;
+      sideDistX = (player.x - mapX) * deltaDistX;
+    }else{
+      stepX = 1;
+      sideDistX = (mapX + 1.0 - player.x) * deltaDistX;
+    }
+    if(rayDirY < 0){
+      stepY = -1;
+      sideDistY = (player.y - mapY) * deltaDistY;
+    }else{
+      stepY = 1;
+      sideDistY = (mapY + 1.0 - player.y) * deltaDistY;
+    }
+
+    // 6. Perform DDA
+    while(hit === 0){
+      // Jump to next map square, OR in x-direction, OR in y-direction
+      if(sideDistX < sideDistY){
+        sideDistX += deltaDistX;
+        mapX += stepX;
+        side = 0; // hit a vertical wall
+      }else{
+        sideDistY += deltaDistY;
+        mapY += stepY;
+        side = 1; // hit a horizontal wall
+      }
+      // Check if ray has hit a wall
+      if(MAP[mapY][mapX] > 0) hit = 1;
+    }
+
+    // 7. Calculate distance projected on camera direction (perp distance)
+    if(side === 0){
+      perpWallDist = (mapX - player.x + (1 - stepX) / 2) / rayDirX;
+    }else{
+      perpWallDist = (mapY - player.y + (1 - stepY) / 2) / rayDirY;
+    }
+
+    // 8. Calculate height of line to draw on screen
+    const lineHeight = Math.floor(h / perpWallDist);
+
+    // 9. Calculate lowest and highest pixel to fill in current stripe
+    let drawStart = -lineHeight / 2 + h / 2;
+    if(drawStart < 0) drawStart = 0;
+    let drawEnd = lineHeight / 2 + h / 2;
+    if(drawEnd >= h) drawEnd = h - 1;
+
+    // 10. Texture coordinate
+    let wallX; // where exactly the wall was hit
+    if(side === 0){
+      wallX = player.y + perpWallDist * rayDirY;
+    }else{
+      wallX = player.x + perpWallDist * rayDirX;
+    }
+    wallX -= Math.floor(wallX);
+
+    const texX = Math.floor(wallX * TEXTURE_W);
+    const step = TEXTURE_W / lineHeight;
+    let texPos = (drawStart - h / 2 + lineHeight / 2) * step;
+
+    // 11. Draw the vertical stripe
+    for(let y=drawStart; y<drawEnd; y++){
+      const texY = Math.floor(texPos) & (TEXTURE_W - 1);
+      texPos += step;
+
+      const pixel = wallTexture.getContext('2d')
+                              .getImageData(texX, texY, 1, 1).data;
+
+      // Simple light based on distance
+      const light = 1.0 / (1.0 + perpWallDist * perpWallDist * 0.0005);
+      const r = Math.min(255, pixel[0] * light);
+      const g = Math.min(255, pixel[1] * light);
+      const b = Math.min(255, pixel[2] * light);
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+}
+
+// ────────────────────────  RESIZE  ────────────────────────
+function resize(){
+  canvas.width  = window.innerWidth / 8;
+  canvas.height = window.innerHeight / 8;
+}
+</script>
+</body>
+</html>
