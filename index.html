@@ -27,60 +27,88 @@ const MAP = [
 const MAP_WIDTH  = MAP[0].length;
 const MAP_HEIGHT = MAP.length;
 
-// ────────────────────────  PERLIN NOISE  ────────────────────────
-function PerlinNoise(seed=0){
-  const perm = new Uint8Array(512);
+// ────────────────────────  PERLIN NOISE (4D)  ────────────────────────
+// 4D Perlin lets us sample on a torus surface so textures tile seamlessly.
+function PerlinNoise4D(){
   const p = new Uint8Array(256);
-  for(let i=0;i<256;i++) p[i] = i;
-  // Shuffle
-  for(let i=255;i>0;i--){
-    const j = Math.floor((i+1)*Math.random());
+  for(let i = 0; i < 256; i++) p[i] = i;
+  for(let i = 255; i > 0; i--){
+    const j = Math.floor((i + 1) * Math.random());
     [p[i], p[j]] = [p[j], p[i]];
   }
-  for(let i=0;i<512;i++) perm[i] = p[i & 255];
+  // Double to avoid index wrapping in hot path
+  const perm = new Uint8Array(512);
+  for(let i = 0; i < 512; i++) perm[i] = p[i & 255];
 
   function fade(t){ return t*t*t*(t*(t*6-15)+10); }
-  function lerp(a,b,t){ return a + t*(b-a); }
-  function grad(hash, x, y, z){
-    const h = hash & 15;
-    const u = h<8 ? x : y;
-    const v = h<4 ? y : (h===12||h===14 ? x : z);
-    return ((h&1)===0 ? u : -u) + ((h&2)===0 ? v : -v);
+  function lerp(a, b, t){ return a + t*(b-a); }
+
+  // 4D gradient: pick from 32 directions on a 4-cube
+  function grad4(h, x, y, z, w){
+    h &= 31;
+    const u = h < 24 ? x : y;
+    const v = h < 16 ? y : z;
+    const q = h <  8 ? z : w;
+    return ((h&1) ? -u:u) + ((h&2) ? -v:v) + ((h&4) ? -q:q);
   }
-  return function noise(x,y,z){
-    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
-    x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
-    const u = fade(x), v = fade(y), w = fade(z);
-    const A  = perm[X]+Y, AA = perm[A]+Z, AB = perm[A+1]+Z;
-    const B  = perm[X+1]+Y, BA = perm[B]+Z, BB = perm[B+1]+Z;
+
+  return function noise4(x, y, z, w){
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    const Z = Math.floor(z) & 255, W = Math.floor(w) & 255;
+    x -= Math.floor(x); y -= Math.floor(y);
+    z -= Math.floor(z); w -= Math.floor(w);
+    const fx = fade(x), fy = fade(y), fz = fade(z), fw = fade(w);
+
+    // Hash all 16 corners of the 4D hypercube
+    const A   = perm[X  ]+Y, B   = perm[X+1]+Y;
+    const AA  = perm[A  ]+Z, AB  = perm[A+1]+Z;
+    const BA  = perm[B  ]+Z, BB  = perm[B+1]+Z;
+    const AAA = perm[AA  ]+W, AAB = perm[AA+1]+W;
+    const ABA = perm[AB  ]+W, ABB = perm[AB+1]+W;
+    const BAA = perm[BA  ]+W, BAB = perm[BA+1]+W;
+    const BBA = perm[BB  ]+W, BBB = perm[BB+1]+W;
 
     return lerp(
       lerp(
-        lerp(grad(perm[AA],   x,   y,   z),
-             grad(perm[BA],   x-1, y,   z), u),
-        lerp(grad(perm[AB],   x,   y-1, z),
-             grad(perm[BB],   x-1, y-1, z), u), v),
+        lerp(lerp(grad4(perm[AAA  ],x,  y,  z,  w), grad4(perm[BAA  ],x-1,y,  z,  w),fx),
+             lerp(grad4(perm[ABA  ],x,  y-1,z,  w), grad4(perm[BBA  ],x-1,y-1,z,  w),fx),fy),
+        lerp(lerp(grad4(perm[AAB  ],x,  y,  z-1,w), grad4(perm[BAB  ],x-1,y,  z-1,w),fx),
+             lerp(grad4(perm[ABB  ],x,  y-1,z-1,w), grad4(perm[BBB  ],x-1,y-1,z-1,w),fx),fy),fz),
       lerp(
-        lerp(grad(perm[AA+1], x,   y,   z-1),
-             grad(perm[BA+1], x-1, y,   z-1), u),
-        lerp(grad(perm[AB+1], x,   y-1, z-1),
-             grad(perm[BB+1], x-1, y-1, z-1), u), v), w);
+        lerp(lerp(grad4(perm[AAA+1],x,  y,  z,  w-1),grad4(perm[BAA+1],x-1,y,  z,  w-1),fx),
+             lerp(grad4(perm[ABA+1],x,  y-1,z,  w-1),grad4(perm[BBA+1],x-1,y-1,z,  w-1),fx),fy),
+        lerp(lerp(grad4(perm[AAB+1],x,  y,  z-1,w-1),grad4(perm[BAB+1],x-1,y,  z-1,w-1),fx),
+             lerp(grad4(perm[ABB+1],x,  y,  z-1,w-1),grad4(perm[BBB+1],x-1,y-1,z-1,w-1),fx),fy),fz),fw);
   };
 }
-const noise = PerlinNoise(42); // deterministic seed
+const noise4 = PerlinNoise4D();
 
 // ────────────────────────  TEXTURE GENERATION  ────────────────────────
-// baseColor / noiseColor: [r, g, b] arrays (0–255).
-// The noise value (0–1) linearly blends from baseColor to noiseColor.
-// scale: how many noise "tiles" fit across the texture — higher = finer grain.
-// zOffset: slice through the 3-D noise volume for variety.
-function generateNoiseTextureData({ zOffset = 0, scale = 4, baseColor = [0,0,0], noiseColor = [255,255,255] } = {}){
+// Seamlessly tileable via toroidal (torus) sampling in 4D noise.
+//
+// The trick: map each 2D texture axis onto a circle in noise space —
+//   u = x/W  →  θ = u·2π  →  noise dims 0,1 = (cos θ, sin θ)·scale
+//   v = y/W  →  φ = v·2π  →  noise dims 2,3 = (cos φ, sin φ)·scale
+//
+// Pixel 0 and pixel W land on the same point of the circle, so the texture
+// is mathematically periodic — zero seam, no blending tricks needed.
+//
+//   offset : [d0,d1,d2,d3] shifts the torus centre in noise space (for variety)
+//   scale  : circle radius — larger = more noise features per tile
+//   baseColor / noiseColor : [r,g,b] endpoints of the colour ramp
+function generateNoiseTextureData({ offset = [0,0,0,0], scale = 4, baseColor = [0,0,0], noiseColor = [255,255,255] } = {}){
   const data = new Uint8ClampedArray(TEXTURE_W * TEXTURE_W * 4);
-  for(let y = 0; y < TEXTURE_W; y++){
-    for(let x = 0; x < TEXTURE_W; x++){
-      // scale controls how many noise periods span the texture
-      const n = noise(x / TEXTURE_W * scale, y / TEXTURE_W * scale, zOffset) * 0.5 + 0.5; // [0,1]
-      const i = (y * TEXTURE_W + x) * 4;
+  const TAU = Math.PI * 2;
+  for(let py = 0; py < TEXTURE_W; py++){
+    const phi = py / TEXTURE_W * TAU;
+    const cz  = Math.cos(phi) * scale + offset[2];
+    const sz  = Math.sin(phi) * scale + offset[3];
+    for(let px = 0; px < TEXTURE_W; px++){
+      const theta = px / TEXTURE_W * TAU;
+      const cx = Math.cos(theta) * scale + offset[0];
+      const sx = Math.sin(theta) * scale + offset[1];
+      const n  = noise4(cx, sx, cz, sz) * 0.5 + 0.5; // remap [-1,1] → [0,1]
+      const i  = (py * TEXTURE_W + px) * 4;
       data[i+0] = Math.floor(baseColor[0] + n * (noiseColor[0] - baseColor[0]));
       data[i+1] = Math.floor(baseColor[1] + n * (noiseColor[1] - baseColor[1]));
       data[i+2] = Math.floor(baseColor[2] + n * (noiseColor[2] - baseColor[2]));
@@ -91,20 +119,23 @@ function generateNoiseTextureData({ zOffset = 0, scale = 4, baseColor = [0,0,0],
 }
 
 // ── Texture definitions ───────────────────────────────────────────────────────
-// Wall: cool stone look — dark grey base, lighter grey noise, fine scale
+// scale is the torus circle radius — keep it low (1–3) so blobs are large and
+// readable. High values just produce uniform static with no visible structure.
+
+// Wall: chunky stone blocks — high contrast light/dark patches
 const wallTexData = generateNoiseTextureData({
-  zOffset: 0, scale: 6,
-  baseColor: [60, 55, 50], noiseColor: [180, 165, 140]
+  offset: [0,0,0,0], scale: 1.8,
+  baseColor: [40, 35, 30], noiseColor: [200, 185, 155]
 });
-// Floor: worn concrete — olive/brown base, tan noise, very fine tiling
+// Floor: worn flagstones — warmer, mid-range contrast, slightly finer grain
 const floorTexData = generateNoiseTextureData({
-  zOffset: 3.7, scale: 8,
-  baseColor: [45, 40, 30], noiseColor: [120, 110, 80]
+  offset: [10,0,0,0], scale: 2.4,
+  baseColor: [55, 45, 30], noiseColor: [105, 90, 60]
 });
-// Ceiling: dark plaster — near-black base, muted blue-grey noise
+// Ceiling: sooty plaster — very low contrast, stays dark so eye goes to walls
 const ceilTexData = generateNoiseTextureData({
-  zOffset: 9.1, scale: 5,
-  baseColor: [20, 20, 28], noiseColor: [70, 70, 90]
+  offset: [0,0,10,0], scale: 1.5,
+  baseColor: [18, 18, 24], noiseColor: [52, 50, 62]
 });
 
 // ────────────────────────  GAME OBJECTS  ────────────────────────
