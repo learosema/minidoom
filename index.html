@@ -13,8 +13,7 @@
 
 <script>
 // ────────────────────────  CONFIGURATION  ────────────────────────
-const TILE_SIZE   = 64;          // Size of each map tile in world units
-const TEXTURE_W   = 64;          // Texture width/height
+const TEXTURE_W   = 32;          // Texture width/height
 const MAP = [
   [1,1,1,1,1,1,1,1,1,1],
   [1,0,0,0,0,0,0,0,0,1],
@@ -318,8 +317,8 @@ function render(){
 
 // ────────────────────────  RESIZE  ────────────────────────
 function resize(){
-  canvas.width  = window.innerWidth / 4;
-  canvas.height = window.innerHeight / 4;
+  canvas.width  = window.innerWidth / 2;
+  canvas.height = window.innerHeight / 2;
 }
 </script>
 </body>
