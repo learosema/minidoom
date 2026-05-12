@@ -33,7 +33,7 @@ jobs:
             --body "🤖 Agent is working on this. I'll open a draft PR when I'm done."
 
       - name: Run coding agent
-        uses: dagger/dagger-for-github@v8
+        uses: dagger/dagger-for-github@v8.4.1
         with:
           version: "0.20.8"
           verb: call
