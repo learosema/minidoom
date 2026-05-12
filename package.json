@@ -1,0 +1,25 @@
+{
+  "name": "minidoom",
+  "version": "1.0.0",
+  "description": "This is a basic 2.5D-engine in JavaScript using procedural noise textures in a single HTML file.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/learosema/minidoom.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/learosema/minidoom/issues"
+  },
+  "homepage": "https://github.com/learosema/minidoom#readme",
+  "devDependencies": {
+    "vite": "^8.0.0"
+  }
+}
