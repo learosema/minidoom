@@ -1,0 +1,65 @@
+name: AI Coding Agent
+
+on:
+  # Manual trigger only. A maintainer must explicitly choose to run the agent
+  # on a specific issue, which means they've read the issue body first.
+  # This prevents prompt-injection attacks where a malicious issue body could
+  # hijack an automatically triggered agent.
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to work on
+        required: true
+        type: number
+
+# Minimal token permissions — only what the agent actually needs.
+permissions:
+  contents: write        # create branch + push commits
+  pull-requests: write   # open the draft PR
+  issues: write          # post progress comments
+
+jobs:
+  solve:
+    name: Solve issue #${{ inputs.issue_number }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comment — agent starting
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ inputs.issue_number }} \
+            --body "🤖 Agent is working on this. I'll open a draft PR when I'm done."
+
+      - name: Run coding agent
+        uses: dagger/dagger-for-github@v7
+        with:
+          verb: call
+          # Dagger reads GH_TOKEN from the environment and treats it as a secret
+          # (never logged). ANTHROPIC_API_KEY selects the LLM provider;
+          # swap for OPENAI_* vars to use a different model.
+          args: >-
+            solve
+            --issue-number=${{ inputs.issue_number }}
+            --repo=${{ github.repository }}
+            --gh-token=env:GH_TOKEN
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment — success
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ inputs.issue_number }} \
+            --body "✅ Done — check the draft PR I just opened."
+
+      - name: Comment — failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ inputs.issue_number }} \
+            --body "❌ I wasn't able to solve this one automatically. The run log has details."

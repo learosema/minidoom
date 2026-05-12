@@ -15,6 +15,19 @@ Copy `.env.local.example` to `.env.local` and fill in your API key (already giti
 
 ## Functions
 
+### `solve` — coding agent (GitHub issue → draft PR)
+
+Clones the repo inside a container, reads a GitHub issue, implements a fix, runs the tests, then opens a **draft PR** for human review. Draft = the agent can't accidentally ship broken code without a human clicking "ready for review".
+
+```bash
+dagger call solve \
+  --issue-number=42 \
+  --repo=owner/repo \
+  --gh-token=env:GH_TOKEN
+```
+
+Required token scopes: `contents:write`, `pull-requests:write`, `issues:read`.
+
 ### `test` — CI
 
 Runs `npm test` inside a fresh Node.js 22 Alpine container. No API key required.
@@ -64,7 +77,7 @@ Put your preferred vars in `.env.local`; Dagger picks them up automatically.
 `.github/workflows/ci.yml` defines two jobs:
 
 | Job | Trigger | Needs secret |
-|-----|---------|-------------|
+| --- | ------- | ----------- |
 | `test` | every push + PR | none |
 | `review` | PRs only | `ANTHROPIC_API_KEY` |
 
