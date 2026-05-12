@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mini Doom — Render Gap Tests</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #ddd; padding: 1.5em; }
+    h1 { font-size: 1.1em; margin-bottom: 1em; }
+    .result { margin-bottom: 1.5em; }
+    .pass { color: #4f4; }
+    .fail { color: #f44; }
+    canvas { display: block; image-rendering: pixelated; margin: 0.25em 0; border: 1px solid #444; }
+    .label { margin-bottom: 0.15em; }
+  </style>
+</head>
+<body>
+<h1>Render gap tests — pink (#f0f) pixels are undrawn gaps</h1>
+<div id="results"></div>
+<script type="module">
+import { render } from './src/renderer.js';
+import { setMap } from './src/map.js';
+import { player } from './src/player.js';
+
+const W = 80, H = 60;
+
+function makeCanvas() {
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.style.width = `${W * 4}px`;
+  c.style.height = `${H * 4}px`;
+  return c;
+}
+
+// 7×7 room: walls on border, floor inside.
+function makeRoom(floorHeight = 0) {
+  const size = 7;
+  const grid = [];
+  const hmap = [];
+  for (let y = 0; y < size; y++) {
+    grid[y] = new Array(size).fill(1);
+    hmap[y] = new Array(size).fill(0);
+  }
+  for (let y = 1; y < size - 1; y++) {
+    for (let x = 1; x < size - 1; x++) {
+      grid[y][x] = 0;
+      hmap[y][x] = floorHeight;
+    }
+  }
+  return { grid, hmap };
+}
+
+// Mixed room: left half at heightA, right half at heightB, walls on border.
+function makeMixedRoom(heightA, heightB) {
+  const size = 9;
+  const grid = [];
+  const hmap = [];
+  for (let y = 0; y < size; y++) {
+    grid[y] = new Array(size).fill(1);
+    hmap[y] = new Array(size).fill(0);
+  }
+  for (let y = 1; y < size - 1; y++) {
+    for (let x = 1; x < size - 1; x++) {
+      grid[y][x] = 0;
+      hmap[y][x] = x < Math.floor(size / 2) ? heightA : heightB;
+    }
+  }
+  return { grid, hmap };
+}
+
+function runTest(name, grid, hmap, px, py, pz, dirX = 1, dirY = 0) {
+  const canvas = makeCanvas();
+  const ctx = canvas.getContext('2d');
+
+  setMap(grid, hmap);
+  player.x = px; player.y = py; player.z = pz;
+  player.dirX = dirX; player.dirY = dirY;
+  player.planeX = -dirY * 0.66; player.planeY = dirX * 0.66;
+
+  // Pre-fill with pink — undrawn pixels will remain pink after render.
+  ctx.fillStyle = '#ff00ff';
+  ctx.fillRect(0, 0, W, H);
+
+  render(ctx, canvas, /* useExistingBuffer */ true);
+
+  const data = ctx.getImageData(0, 0, W, H).data;
+  let pinkCount = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 255) pinkCount++;
+  }
+
+  return { name, canvas, pinkCount, pass: pinkCount === 0 };
+}
+
+const results = document.getElementById('results');
+
+const tests = [
+  // Baseline: normal floor, looking at far wall
+  (() => {
+    const { grid, hmap } = makeRoom(0);
+    return runTest('Normal floor → wall (baseline)', grid, hmap, 1.5, 3.5, 0);
+  })(),
+
+  // Player in water (-0.25) looking at wall
+  (() => {
+    const { grid, hmap } = makeRoom(-0.25);
+    return runTest('Water floor (−0.25) → wall', grid, hmap, 1.5, 3.5, -0.25);
+  })(),
+
+  // Player on elevated floor (0.2) looking at wall
+  (() => {
+    const { grid, hmap } = makeRoom(0.2);
+    return runTest('Elevated floor (0.2) → wall', grid, hmap, 1.5, 3.5, 0.2);
+  })(),
+
+  // Player in water, looking across normal-floor corridor at wall
+  // Left half water, right half normal — player on water side.
+  (() => {
+    const { grid, hmap } = makeMixedRoom(-0.25, 0);
+    return runTest('Water → normal floor → wall', grid, hmap, 1.5, 4.5, -0.25);
+  })(),
+
+  // Player on normal floor, wall sits on elevated platform ahead
+  (() => {
+    const { grid, hmap } = makeMixedRoom(0, 0.2);
+    return runTest('Normal floor → elevated floor → wall', grid, hmap, 1.5, 4.5, 0);
+  })(),
+
+  // Enclosed room: face all 4 directions from center
+  ...([
+    [1, 0], [-1, 0], [0, 1], [0, -1]
+  ].map(([dx, dy]) => {
+    const { grid, hmap } = makeRoom(0);
+    return runTest(`Enclosed room, facing (${dx},${dy})`, grid, hmap, 3.5, 3.5, 0, dx, dy);
+  })),
+];
+
+for (const t of tests) {
+  const div = document.createElement('div');
+  div.className = 'result';
+  div.innerHTML = `<div class="label"><span class="${t.pass ? 'pass' : 'fail'}">[${t.pass ? 'PASS' : 'FAIL'}]</span> ${t.name} — pink pixels: ${t.pinkCount}</div>`;
+  div.appendChild(t.canvas);
+  results.appendChild(div);
+}
+</script>
+</body>
+</html>
