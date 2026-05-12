@@ -33,8 +33,9 @@ jobs:
             --body "🤖 Agent is working on this. I'll open a draft PR when I'm done."
 
       - name: Run coding agent
-        uses: dagger/dagger-for-github@v7
+        uses: dagger/dagger-for-github@v8
         with:
+          version: "0.20.8"
           verb: call
           # Dagger reads GH_TOKEN from the environment and treats it as a secret
           # (never logged). ANTHROPIC_API_KEY selects the LLM provider;
