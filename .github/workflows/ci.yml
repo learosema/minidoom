@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Renderer gap tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dagger/dagger-for-github@v7
+        with:
+          verb: call
+          args: test
+
+  review:
+    name: AI code review
+    runs-on: ubuntu-latest
+    # Only run on PRs and only when the secret is present.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dagger/dagger-for-github@v7
+        with:
+          verb: call
+          args: review
+        env:
+          # Set ANTHROPIC_API_KEY in repo Settings → Secrets to enable Claude reviews.
+          # Swap for OPENAI_BASE_URL + OPENAI_MODEL to use any OpenAI-compatible model.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
