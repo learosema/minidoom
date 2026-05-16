@@ -12,6 +12,9 @@ on:
         required: true
         type: number
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Minimal token permissions — only what the agent actually needs.
 permissions:
   contents: write        # create branch + push commits
