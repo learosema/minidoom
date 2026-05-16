@@ -33,10 +33,13 @@ jobs:
           verb: call
           args: review --source=./src
         env:
-          # Set one of these groups in repo Settings → Secrets:
-          # Anthropic Claude:    ANTHROPIC_API_KEY
+          # Set one provider group in repo Settings → Secrets:
+          # Anthropic Claude:     ANTHROPIC_API_KEY
+          # Google Gemini:        GEMINI_API_KEY  [+ GEMINI_MODEL]
           # Groq / OpenAI-compat: OPENAI_BASE_URL + OPENAI_API_KEY + OPENAI_MODEL
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
