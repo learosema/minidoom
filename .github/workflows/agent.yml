@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue comment ${{ inputs.issue_number }} \
-            --body "🤖 Agent is working on this. I'll open a draft PR when I'm done."
+            --body "🤖 Agent is starting. It will post progress updates directly on this issue."
 
       - name: Run coding agent
         uses: dagger/dagger-for-github@v8.4.1
@@ -57,18 +57,10 @@ jobs:
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Comment — success
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue comment ${{ inputs.issue_number }} \
-            --body "✅ Done — check the draft PR I just opened."
-
-      - name: Comment — failure
+      - name: Comment — unexpected failure
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue comment ${{ inputs.issue_number }} \
-            --body "❌ I wasn't able to solve this one automatically. The run log has details."
+            --body "❌ Agent run failed unexpectedly before it could post an update. Check the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."

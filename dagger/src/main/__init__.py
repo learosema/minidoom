@@ -152,9 +152,11 @@ class Minidoom:
 
                 Work inside $workspace. Follow these steps in order:
 
-                1. Read the issue to understand what is needed:
+                1. Read the issue and post a brief plan as a comment:
                    gh issue view $issue_number --repo $repo --json title,body \
                      -q '"## " + .title + "\n\n" + .body'
+                   gh issue comment $issue_number --repo $repo \
+                     --body "📋 Read the issue. Here's my plan: <one sentence>"
 
                 2. Explore the relevant source files to understand the codebase:
                    (cat src/renderer.js, src/dungeon.js, src/player.js, etc.)
@@ -170,6 +172,8 @@ class Minidoom:
 
                 5. Run the full test suite and iterate until everything passes:
                    npm test
+                   Post a comment when tests pass:
+                   gh issue comment $issue_number --repo $repo --body "✅ Tests passing."
 
                 6. Commit with a conventional-commits prefix that matches the work
                    (feat: for new features, fix: for bug fixes, docs: for docs, etc.):
@@ -186,11 +190,14 @@ class Minidoom:
                      --title "<prefix>: <short description>" \
                      --body "Closes #$issue_number\n\n## What changed\n<bullet points>\n\n## Testing\n<how it was verified>"
 
-                9. Write the PR URL and a short summary of your changes to $result.
+                9. Post the PR URL as a comment on the issue and write it to $result:
+                   gh issue comment $issue_number --repo $repo \
+                     --body "🚀 Draft PR opened: <pr_url>\n\n<brief summary of changes>"
 
                 Do not stop until the draft PR is open and all tests pass.
-                If you cannot make the tests pass after several attempts, explain
-                why in $result instead of opening a broken PR.
+                If you cannot make the tests pass after several attempts, post a
+                comment explaining what you tried and why it failed, then write
+                the same explanation to $result.
             """)
             .env()
             .output("result")
