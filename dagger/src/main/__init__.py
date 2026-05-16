@@ -6,18 +6,12 @@ from dagger import dag, function, object_type
 class Minidoom:
 
     @function
-    async def test(self) -> str:
+    async def test(self, source: dagger.Directory) -> str:
         """Run the renderer gap tests inside a Node.js container."""
         return await (
             dag.container()
             .from_("node:22-alpine")
-            .with_directory(
-                "/app",
-                dag.host().directory(
-                    ".",
-                    exclude=["node_modules", "dist", ".git", "dagger"],
-                ),
-            )
+            .with_directory("/app", source)
             .with_workdir("/app")
             .with_exec(["npm", "ci"])
             .with_exec(["npm", "test"])
@@ -25,7 +19,7 @@ class Minidoom:
         )
 
     @function
-    async def review(self) -> str:
+    async def review(self, source: dagger.Directory) -> str:
         """AI code review of the renderer source.
 
         The LLM provider is selected automatically from environment variables —
@@ -37,17 +31,17 @@ class Minidoom:
           Ollama (local)     OPENAI_BASE_URL=http://host:11434/v1/  +  OPENAI_MODEL=<model>
                              (note: trailing slash on the URL is mandatory for Ollama)
         """
-        source = await (
+        source_text = await (
             dag.container()
             .from_("alpine:3.20")
-            .with_directory("/src", dag.host().directory("src"))
+            .with_directory("/src", source)
             .with_exec(["sh", "-c", "for f in /src/*.js; do echo \"=== $f ===\"; cat $f; done"])
             .stdout()
         )
 
         env = (
             dag.env()
-            .with_string_input("source", source, "the raycaster source files")
+            .with_string_input("source", source_text, "the raycaster source files")
             .with_string_output("review", "code review findings")
         )
 
@@ -67,7 +61,7 @@ class Minidoom:
         )
 
     @function
-    async def fix(self, issue: str) -> dagger.Directory:
+    async def fix(self, source: dagger.Directory, issue: str) -> dagger.Directory:
         """Agentic fix: describe a rendering issue; get back modified src/ files.
 
         The agent runs inside a Node.js container so it can read source files,
@@ -76,13 +70,7 @@ class Minidoom:
         workspace = (
             dag.container()
             .from_("node:22-alpine")
-            .with_directory(
-                "/app",
-                dag.host().directory(
-                    ".",
-                    exclude=["node_modules", "dist", ".git", "dagger"],
-                ),
-            )
+            .with_directory("/app", source)
             .with_workdir("/app")
             .with_exec(["npm", "ci"])
         )

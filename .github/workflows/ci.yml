@@ -15,7 +15,7 @@ jobs:
         with:
           version: "0.20.8"
           verb: call
-          args: test
+          args: test --source=.
 
   review:
     name: AI code review
@@ -28,7 +28,7 @@ jobs:
         with:
           version: "0.20.8"
           verb: call
-          args: review
+          args: review --source=./src
         env:
           # Set ANTHROPIC_API_KEY in repo Settings → Secrets to enable Claude reviews.
           # Swap for OPENAI_BASE_URL + OPENAI_MODEL to use any OpenAI-compatible model.
