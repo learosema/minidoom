@@ -150,6 +150,12 @@ class Minidoom:
                 Your goal is to implement the work described in a GitHub issue and
                 open a draft PR for human review.
 
+                IMPORTANT: You must execute every command for real inside $workspace.
+                Do NOT simulate, pretend, or describe what you would do.
+                Do NOT use placeholder values like "simulated", "example.com", or "999".
+                Every git command, every npm command, every gh command must actually run.
+                If a command fails, read the error and fix it — do not skip or fake it.
+
                 Work inside $workspace. Follow these steps in order:
 
                 1. Read the issue and post a brief plan as a comment:
